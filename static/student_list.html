@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>学生列表 - 学校管理系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <span class="brand" onclick="window.location.href='index.html'"><span class="logo-dot">&#127979;</span> 学生列表</span>
+  <div class="nav-right">
+    <span class="user-chip" id="user-name"></span>
+    <button class="btn-logout" onclick="logout()">退出</button>
+  </div>
+</nav>
+
+<div class="page">
+  <!-- 搜索栏 -->
+  <div class="toolbar">
+    <input type="text" id="keyword" placeholder="搜索姓名 / 手机号 / 学号..." maxlength="50">
+    <button class="btn btn-primary btn-sm" id="btn-search">搜索</button>
+    <button class="btn btn-ghost btn-sm" id="btn-reset">重置</button>
+  </div>
+
+  <!-- 列表头 -->
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+    <span style="font-size:.82rem; color:var(--text-muted);">共 <b id="total-count" style="color:var(--primary);">0</b> 条记录</span>
+    <a href="student_form.html" class="btn btn-primary btn-sm" style="width:auto;">+ 新增学生</a>
+  </div>
+
+  <!-- 表格 (平板以上) -->
+  <div class="card" style="padding:8px 12px;">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>姓名</th><th>性别</th><th>年龄</th><th>手机号</th><th>班级</th><th>老师</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 卡片列表 (移动端) -->
+  <div class="card-list" id="card-list"></div>
+
+  <!-- 空状态 -->
+  <div class="empty" id="empty-state" style="display:none;">
+    <div class="icon">&#128203;</div>
+    <div class="text" id="empty-text">暂无学生数据</div>
+  </div>
+
+  <!-- 分页 -->
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<a href="student_form.html" class="fab" title="新增学生">+</a>
+
+<!-- 分班 / 选老师 弹窗 -->
+<div class="modal-overlay" id="assign-modal">
+  <div class="modal">
+    <div class="modal-title">分配班级与老师</div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>学生</label>
+        <input type="text" id="assign-student-name" disabled style="background:var(--bg);">
+      </div>
+      <div class="form-group">
+        <label for="assign-class">班级</label>
+        <select id="assign-class">
+          <option value="">请选择班级（可选）</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="assign-teacher">负责老师</label>
+        <select id="assign-teacher">
+          <option value="">请选择老师（可选）</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" id="assign-cancel">取消</button>
+      <button class="btn btn-primary btn-sm" id="assign-save" style="width:auto;">保存</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/layout.js"></script>
+<script>
+(function () {
+  var user = checkAuth();
+  document.getElementById('user-name').textContent = user.nickname || user.username;
+
+  var currentPage = 1, pageSize = 10, isSearchMode = false, searchResults = [];
+
+  var tableBody = document.getElementById('table-body');
+  var cardList = document.getElementById('card-list');
+  var emptyState = document.getElementById('empty-state');
+  var emptyText = document.getElementById('empty-text');
+  var pagination = document.getElementById('pagination');
+  var totalCount = document.getElementById('total-count');
+  var keywordInput = document.getElementById('keyword');
+
+  function escHtml(str) {
+    if (str === null || str === undefined) return '--';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function genderTag(g) {
+    return '<span class="badge ' + (g === '男' ? 'blue' : 'pink') + '">' + escHtml(g || '未知') + '</span>';
+  }
+
+  function buildActions(s) {
+    var wrap = document.createElement('div');
+    wrap.className = 'actions';
+    var assignBtn = document.createElement('button');
+    assignBtn.className = 'btn btn-outline btn-xs';
+    assignBtn.textContent = '分班';
+    assignBtn.onclick = function () { openAssign(s); };
+    var editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-outline btn-xs';
+    editBtn.textContent = '编辑';
+    editBtn.onclick = function () { editStudent(s.id, s); };
+    var delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-outline-danger btn-xs';
+    delBtn.textContent = '删除';
+    delBtn.onclick = function () { delStudent(s.id, s.name || ''); };
+    wrap.appendChild(assignBtn);
+    wrap.appendChild(editBtn);
+    wrap.appendChild(delBtn);
+    return wrap;
+  }
+
+  function renderRows(rows) {
+    tableBody.innerHTML = '';
+    cardList.innerHTML = '';
+
+    if (!rows || rows.length === 0) {
+      emptyState.style.display = 'block';
+      emptyText.textContent = isSearchMode ? '未找到匹配的学生' : '暂无学生数据';
+      return;
+    }
+    emptyState.style.display = 'none';
+
+    // 表格
+    rows.forEach(function (s) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td><b>' + escHtml(s.name) + '</b></td>' +
+        '<td>' + genderTag(s.gender) + '</td>' +
+        '<td>' + (s.age || '--') + '</td>' +
+        '<td>' + escHtml(s.phone_number) + '</td>' +
+        '<td>' + escHtml(s.cls_name) + '</td>' +
+        '<td>' + escHtml(s.tea_name) + '</td>';
+      var td = document.createElement('td');
+      td.appendChild(buildActions(s));
+      tr.appendChild(td);
+      tableBody.appendChild(tr);
+    });
+
+    // 卡片
+    rows.forEach(function (s) {
+      var card = document.createElement('div');
+      card.className = 'list-card';
+      var tag = s.gender === '男' ? 'male' : 'female';
+      card.innerHTML =
+        '<div class="lc-head"><span class="lc-name">' + escHtml(s.name) + '</span>' +
+        '<span class="lc-tag ' + tag + '">' + escHtml(s.gender || '未知') + '</span></div>' +
+        '<div class="lc-rows">' +
+        '<div class="lc-row"><span class="lc-label">年龄</span><span class="lc-value">' + (s.age || '--') + ' 岁</span></div>' +
+        '<div class="lc-row"><span class="lc-label">手机号</span><span class="lc-value">' + escHtml(s.phone_number) + '</span></div>' +
+        '<div class="lc-row"><span class="lc-label">班级</span><span class="lc-value">' + escHtml(s.cls_name) + '</span></div>' +
+        '<div class="lc-row"><span class="lc-label">老师</span><span class="lc-value">' + escHtml(s.tea_name) + '</span></div>' +
+        '</div><div class="lc-actions"></div>';
+      card.querySelector('.lc-actions').appendChild(buildActions(s));
+      cardList.appendChild(card);
+    });
+  }
+
+  function renderPagination(total, page, totalPages) {
+    totalCount.textContent = total;
+    if (totalPages <= 1) { pagination.innerHTML = ''; return; }
+    var html = '<button ' + (page <= 1 ? 'disabled' : '') + ' onclick="goPage(' + (page - 1) + ')">上一页</button>';
+    var start = Math.max(1, page - 2);
+    var end = Math.min(totalPages, page + 2);
+    if (end - start < 4) {
+      if (start === 1) end = Math.min(totalPages, start + 4);
+      else start = Math.max(1, end - 4);
+    }
+    if (start > 1) html += '<button onclick="goPage(1)">1</button><span style="padding:0 2px;color:var(--text-muted);">...</span>';
+    for (var i = start; i <= end; i++) html += '<button ' + (i === page ? 'class="active"' : '') + ' onclick="goPage(' + i + ')">' + i + '</button>';
+    if (end < totalPages) html += '<span style="padding:0 2px;color:var(--text-muted);">...</span><button onclick="goPage(' + totalPages + ')">' + totalPages + '</button>';
+    html += '<button ' + (page >= totalPages ? 'disabled' : '') + ' onclick="goPage(' + (page + 1) + ')">下一页</button>';
+    html += '<span class="page-info">第 ' + page + '/' + totalPages + ' 页</span>';
+    pagination.innerHTML = html;
+  }
+
+  function paginateArray(arr, page, size) {
+    return arr.slice((page - 1) * size, page * size);
+  }
+
+  // 普通分页加载
+  function loadData(page) {
+    page = page || 1;
+    toggleLoading(true, '加载中...');
+    apiGetStudentPage(page, pageSize)
+      .then(function (res) {
+        renderRows(res.rows || []);
+        renderPagination(res.total, res.page, res.total_pages);
+        currentPage = res.page;
+        isSearchMode = false;
+      })
+      .catch(function (err) {
+        showToast(err.message || '加载失败', 'error');
+        renderRows([]);
+      })
+      .finally(function () { toggleLoading(false); });
+  }
+
+  // 服务端多条件搜索
+  function doSearch(page) {
+    page = page || 1;
+    var kw = keywordInput.value.trim();
+    if (!kw) { loadData(1); return; }
+
+    var params = {};
+    if (/^1\d{10}$/.test(kw)) { params.phone = kw; }
+    else if (/^\d+$/.test(kw)) { params.student_id = kw; }
+    else if (kw.length >= 2) { params.name = kw; }
+    else { showToast('姓名至少输入 2 个字符', 'warning'); return; }
+
+    toggleLoading(true, '搜索中...');
+    apiSearchStudent(params)
+      .then(function (res) {
+        searchResults = res.data || [];
+        isSearchMode = true;
+        var total = searchResults.length;
+        var totalPages = Math.max(1, Math.ceil(total / pageSize));
+        currentPage = Math.min(page, totalPages);
+        renderRows(paginateArray(searchResults, currentPage, pageSize));
+        renderPagination(total, currentPage, totalPages);
+        if (total === 0) showToast('未找到匹配的学生', 'warning');
+      })
+      .catch(function (err) {
+        showToast(err.message || '搜索失败', 'error');
+      })
+      .finally(function () { toggleLoading(false); });
+  }
+
+  window.goPage = function (page) {
+    if (isSearchMode) {
+      var totalPages = Math.max(1, Math.ceil(searchResults.length / pageSize));
+      currentPage = Math.min(page, totalPages);
+      renderRows(paginateArray(searchResults, currentPage, pageSize));
+      renderPagination(searchResults.length, currentPage, totalPages);
+    } else {
+      loadData(page);
+    }
+  };
+
+  window.editStudent = function (id, s) {
+    if (s) { try { sessionStorage.setItem('edit_student', JSON.stringify(s)); } catch (e) {} }
+    window.location.href = 'student_form.html?mode=edit&id=' + id;
+  };
+
+  window.delStudent = function (id, name) {
+    showConfirm('删除确认', '确定要删除学生「' + name + '」吗？此操作不可撤销。')
+      .then(function (ok) {
+        if (!ok) return;
+        toggleLoading(true, '删除中...');
+        apiDeleteStudent(id)
+          .then(function () {
+            showToast('删除成功', 'success');
+            if (isSearchMode) doSearch(currentPage); else loadData(currentPage);
+          })
+          .catch(function (err) {
+            showToast(err.message || '删除失败', 'error');
+            toggleLoading(false);
+          });
+      });
+  };
+
+  // ---- 分班 / 选老师 ----
+  var assignModal = document.getElementById('assign-modal');
+  var assignStudentId = null;
+
+  function openAssign(s) {
+    assignStudentId = s.id;
+    document.getElementById('assign-student-name').value = s.name || '';
+    document.getElementById('assign-class').value = s.class_id || '';
+    document.getElementById('assign-teacher').value = s.teacher_id || '';
+    assignModal.classList.add('show');
+
+    var classSel = document.getElementById('assign-class');
+    var teacherSel = document.getElementById('assign-teacher');
+    if (classSel.options.length <= 1 && teacherSel.options.length <= 1) {
+      toggleLoading(true, '加载班级与老师...');
+      Promise.all([apiGetAllClasses(), apiGetAllTeachers()])
+        .then(function (arr) {
+          var classes = (arr[0] && arr[0].data) || [];
+          var teachers = (arr[1] && arr[1].data) || [];
+          classSel.innerHTML = '<option value="">请选择班级（可选）</option>';
+          classes.forEach(function (c) {
+            var opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name + '（' + (c.grade || '--') + '）';
+            classSel.appendChild(opt);
+          });
+          teacherSel.innerHTML = '<option value="">请选择老师（可选）</option>';
+          teachers.forEach(function (t) {
+            var opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = t.name + '（' + (t.subject || '--') + '）';
+            teacherSel.appendChild(opt);
+          });
+          classSel.value = s.class_id || '';
+          teacherSel.value = s.teacher_id || '';
+        })
+        .catch(function (err) { showToast(err.message || '加载数据失败', 'error'); })
+        .finally(function () { toggleLoading(false); });
+    }
+  }
+
+  function closeAssign() { assignModal.classList.remove('show'); }
+  document.getElementById('assign-cancel').onclick = closeAssign;
+  assignModal.onclick = function (e) { if (e.target === assignModal) closeAssign(); };
+  document.getElementById('assign-save').onclick = function () {
+    var classId = document.getElementById('assign-class').value;
+    var teacherId = document.getElementById('assign-teacher').value;
+    if (!classId && !teacherId) { showToast('请选择班级或老师', 'warning'); return; }
+
+    toggleLoading(true, '保存中...');
+    var tasks = [];
+    if (classId) tasks.push(apiAssignClass(assignStudentId, classId));
+    if (teacherId) tasks.push(apiAssignTeacher(assignStudentId, teacherId));
+
+    Promise.all(tasks)
+      .then(function () {
+        showToast('分配成功', 'success');
+        closeAssign();
+        if (isSearchMode) doSearch(currentPage); else loadData(currentPage);
+      })
+      .catch(function (err) { showToast(err.message || '分配失败', 'error'); })
+      .finally(function () { toggleLoading(false); });
+  };
+
+  document.getElementById('btn-search').addEventListener('click', function () { doSearch(1); });
+  document.getElementById('btn-reset').addEventListener('click', function () {
+    keywordInput.value = '';
+    isSearchMode = false;
+    searchResults = [];
+    loadData(1);
+  });
+  keywordInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') doSearch(1); });
+
+  // 初始加载
+  loadData(1);
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>登录 - 学校管理系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="auth-page">
+  <div class="auth-logo">&#127979;</div>
+  <div class="auth-title">学校管理系统</div>
+  <div class="auth-sub">欢迎回来，请选择角色登录</div>
+
+  <div class="card" style="padding:20px;">
+    <!-- 角色选择（后端登录必须传角色） -->
+    <div class="seg" id="role-seg">
+      <button type="button" class="seg-item active" data-role="管理员">管理员</button>
+      <button type="button" class="seg-item" data-role="学生">学生</button>
+    </div>
+
+    <div class="form-group">
+      <label for="username">用户名</label>
+      <input type="text" id="username" placeholder="请输入用户名" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label for="password">密码</label>
+      <input type="password" id="password" placeholder="请输入密码" autocomplete="current-password">
+    </div>
+
+    <button class="btn btn-primary" id="btn-login">登 录</button>
+  </div>
+
+  <p class="auth-switch">还没有账号？<a href="register.html">立即注册</a></p>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script>
+(function () {
+  // 已登录则直接跳转
+  if (getUser()) {
+    window.location.href = 'index.html';
+    return;
+  }
+
+  var currentRole = '管理员';
+
+  // 角色切换
+  var segItems = document.querySelectorAll('#role-seg .seg-item');
+  segItems.forEach(function (el) {
+    el.addEventListener('click', function () {
+      segItems.forEach(function (x) { x.classList.remove('active'); });
+      this.classList.add('active');
+      currentRole = this.getAttribute('data-role');
+    });
+  });
+
+  var btn = document.getElementById('btn-login');
+  var usernameEl = document.getElementById('username');
+  var passwordEl = document.getElementById('password');
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') btn.click();
+  });
+
+  btn.addEventListener('click', function () {
+    var username = usernameEl.value.trim();
+    var password = passwordEl.value.trim();
+    if (!username) { showToast('请输入用户名', 'warning'); return; }
+    if (!password) { showToast('请输入密码', 'warning'); return; }
+
+    btn.disabled = true;
+    btn.textContent = '登录中...';
+    toggleLoading(true, '登录中...');
+
+    apiLogin(username, password, currentRole)
+      .then(function (res) {
+        var user = (res && res.data && res.data.uid !== undefined && res.data.uid !== null) ? res.data : null;
+        if (!user) throw new Error('登录响应异常，请重试');
+        saveUser(user);
+        showToast('欢迎回来，' + (user.nickname || user.username), 'success');
+        setTimeout(function () { window.location.href = 'index.html'; }, 500);
+      })
+      .catch(function (err) {
+        showToast(err.message || '登录失败', 'error');
+      })
+      .finally(function () {
+        btn.disabled = false;
+        btn.textContent = '登 录';
+        toggleLoading(false);
+      });
+  });
+})();
+</script>
+
+</body>
+</html>

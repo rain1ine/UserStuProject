@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>老师管理 - 学校管理系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <span class="brand" onclick="window.location.href='index.html'"><span class="logo-dot">&#127979;</span> 老师管理</span>
+  <div class="nav-right">
+    <span class="user-chip" id="user-name"></span>
+    <button class="btn-logout" onclick="logout()">退出</button>
+  </div>
+</nav>
+
+<div class="page">
+  <div class="toolbar">
+    <input type="text" id="keyword" placeholder="搜索姓名 / 手机号 / 工号..." maxlength="50">
+    <button class="btn btn-primary btn-sm" id="btn-search">搜索</button>
+    <button class="btn btn-ghost btn-sm" id="btn-reset">重置</button>
+  </div>
+
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+    <span style="font-size:.82rem; color:var(--text-muted);">共 <b id="total-count" style="color:var(--primary);">0</b> 条记录</span>
+    <a href="teacher_form.html" class="btn btn-primary btn-sm" style="width:auto;">+ 新增老师</a>
+  </div>
+
+  <div class="card" style="padding:8px 12px;">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>姓名</th><th>性别</th><th>年龄</th><th>科目</th><th>手机号</th><th>操作</th></tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card-list" id="card-list"></div>
+  <div class="empty" id="empty-state" style="display:none;">
+    <div class="icon">&#128203;</div>
+    <div class="text" id="empty-text">暂无老师数据</div>
+  </div>
+
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<a href="teacher_form.html" class="fab" title="新增老师">+</a>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/layout.js"></script>
+<script>
+(function () {
+  var user = checkAuth();
+  document.getElementById('user-name').textContent = user.nickname || user.username;
+
+  var currentPage = 1, pageSize = 10, isSearchMode = false, searchResults = [];
+  var tableBody = document.getElementById('table-body');
+  var cardList = document.getElementById('card-list');
+  var emptyState = document.getElementById('empty-state');
+  var emptyText = document.getElementById('empty-text');
+  var pagination = document.getElementById('pagination');
+  var totalCount = document.getElementById('total-count');
+  var keywordInput = document.getElementById('keyword');
+
+  function escHtml(str) {
+    if (str === null || str === undefined) return '--';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function buildActions(t) {
+    var wrap = document.createElement('div');
+    wrap.className = 'actions';
+    var editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-outline btn-xs';
+    editBtn.textContent = '编辑';
+    editBtn.onclick = function () { editTeacher(t); };
+    var delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-outline-danger btn-xs';
+    delBtn.textContent = '删除';
+    delBtn.onclick = function () { delTeacher(t.id, t.name || ''); };
+    wrap.appendChild(editBtn);
+    wrap.appendChild(delBtn);
+    return wrap;
+  }
+
+  function renderRows(rows) {
+    tableBody.innerHTML = '';
+    cardList.innerHTML = '';
+    if (!rows || rows.length === 0) {
+      emptyState.style.display = 'block';
+      emptyText.textContent = isSearchMode ? '未找到匹配的老师' : '暂无老师数据';
+      return;
+    }
+    emptyState.style.display = 'none';
+
+    rows.forEach(function (t) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td><b>' + escHtml(t.name) + '</b></td>' +
+        '<td>' + escHtml(t.gender) + '</td>' +
+        '<td>' + (t.age || '--') + '</td>' +
+        '<td><span class="badge blue">' + escHtml(t.subject) + '</span></td>' +
+        '<td>' + escHtml(t.phone) + '</td>';
+      var td = document.createElement('td');
+      td.appendChild(buildActions(t));
+      tr.appendChild(td);
+      tableBody.appendChild(tr);
+    });
+
+    rows.forEach(function (t) {
+      var card = document.createElement('div');
+      card.className = 'list-card';
+      var tag = t.gender === '女' ? 'female' : 'male';
+      card.innerHTML =
+        '<div class="lc-head"><span class="lc-name">' + escHtml(t.name) + '</span>' +
+        '<span class="lc-tag ' + tag + '">' + escHtml(t.gender || '--') + '</span></div>' +
+        '<div class="lc-rows">' +
+        '<div class="lc-row"><span class="lc-label">年龄</span><span class="lc-value">' + (t.age || '--') + ' 岁</span></div>' +
+        '<div class="lc-row"><span class="lc-label">科目</span><span class="lc-value">' + escHtml(t.subject) + '</span></div>' +
+        '<div class="lc-row"><span class="lc-label">手机号</span><span class="lc-value">' + escHtml(t.phone) + '</span></div>' +
+        '</div><div class="lc-actions"></div>';
+      card.querySelector('.lc-actions').appendChild(buildActions(t));
+      cardList.appendChild(card);
+    });
+  }
+
+  function renderPagination(total, page, totalPages) {
+    totalCount.textContent = total;
+    if (totalPages <= 1) { pagination.innerHTML = ''; return; }
+    var html = '<button ' + (page <= 1 ? 'disabled' : '') + ' onclick="goPage(' + (page - 1) + ')">上一页</button>';
+    var start = Math.max(1, page - 2);
+    var end = Math.min(totalPages, page + 2);
+    if (end - start < 4) {
+      if (start === 1) end = Math.min(totalPages, start + 4);
+      else start = Math.max(1, end - 4);
+    }
+    if (start > 1) html += '<button onclick="goPage(1)">1</button><span style="padding:0 2px;color:var(--text-muted);">...</span>';
+    for (var i = start; i <= end; i++) html += '<button ' + (i === page ? 'class="active"' : '') + ' onclick="goPage(' + i + ')">' + i + '</button>';
+    if (end < totalPages) html += '<span style="padding:0 2px;color:var(--text-muted);">...</span><button onclick="goPage(' + totalPages + ')">' + totalPages + '</button>';
+    html += '<button ' + (page >= totalPages ? 'disabled' : '') + ' onclick="goPage(' + (page + 1) + ')">下一页</button>';
+    html += '<span class="page-info">第 ' + page + '/' + totalPages + ' 页</span>';
+    pagination.innerHTML = html;
+  }
+
+  function paginateArray(arr, page, size) { return arr.slice((page - 1) * size, page * size); }
+
+  function loadData(page) {
+    page = page || 1;
+    toggleLoading(true, '加载中...');
+    apiGetTeacherPage(page, pageSize)
+      .then(function (res) {
+        renderRows(res.rows || []);
+        renderPagination(res.total, res.page, res.total_pages);
+        currentPage = res.page;
+        isSearchMode = false;
+      })
+      .catch(function (err) {
+        showToast(err.message || '加载失败', 'error');
+        renderRows([]);
+      })
+      .finally(function () { toggleLoading(false); });
+  }
+
+  function doSearch(page) {
+    page = page || 1;
+    var kw = keywordInput.value.trim();
+    if (!kw) { loadData(1); return; }
+    var params = {};
+    if (/^1\d{10}$/.test(kw)) { params.phone = kw; }
+    else if (/^\d+$/.test(kw)) { params.teacher_id = kw; }
+    else if (kw.length >= 2) { params.name = kw; }
+    else { showToast('姓名至少输入 2 个字符', 'warning'); return; }
+
+    toggleLoading(true, '搜索中...');
+    apiSearchTeacher(params)
+      .then(function (res) {
+        searchResults = res.data || [];
+        isSearchMode = true;
+        var total = searchResults.length;
+        var totalPages = Math.max(1, Math.ceil(total / pageSize));
+        currentPage = Math.min(page, totalPages);
+        renderRows(paginateArray(searchResults, currentPage, pageSize));
+        renderPagination(total, currentPage, totalPages);
+        if (total === 0) showToast('未找到匹配的老师', 'warning');
+      })
+      .catch(function (err) { showToast(err.message || '搜索失败', 'error'); })
+      .finally(function () { toggleLoading(false); });
+  }
+
+  window.goPage = function (page) {
+    if (isSearchMode) {
+      var totalPages = Math.max(1, Math.ceil(searchResults.length / pageSize));
+      currentPage = Math.min(page, totalPages);
+      renderRows(paginateArray(searchResults, currentPage, pageSize));
+      renderPagination(searchResults.length, currentPage, totalPages);
+    } else {
+      loadData(page);
+    }
+  };
+
+  window.editTeacher = function (t) {
+    try { sessionStorage.setItem('edit_teacher', JSON.stringify(t)); } catch (e) {}
+    window.location.href = 'teacher_form.html?mode=edit&id=' + t.id;
+  };
+
+  window.delTeacher = function (id, name) {
+    showConfirm('删除确认', '确定要删除老师「' + name + '」吗？此操作不可撤销。')
+      .then(function (ok) {
+        if (!ok) return;
+        toggleLoading(true, '删除中...');
+        apiDeleteTeacher(id)
+          .then(function () {
+            showToast('删除成功', 'success');
+            if (isSearchMode) doSearch(currentPage); else loadData(currentPage);
+          })
+          .catch(function (err) { showToast(err.message || '删除失败', 'error'); toggleLoading(false); });
+      });
+  };
+
+  document.getElementById('btn-search').addEventListener('click', function () { doSearch(1); });
+  document.getElementById('btn-reset').addEventListener('click', function () {
+    keywordInput.value = '';
+    isSearchMode = false; searchResults = [];
+    loadData(1);
+  });
+  keywordInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') doSearch(1); });
+
+  loadData(1);
+})();
+</script>
+
+</body>
+</html>

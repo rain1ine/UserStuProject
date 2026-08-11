@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>学生信息 - 学校管理系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <button class="btn-back" onclick="window.location.href='student_list.html'">&#8592;</button>
+  <span class="brand" onclick="window.location.href='index.html'"><span class="logo-dot">&#127979;</span> <span id="page-title">新增学生</span></span>
+  <div class="nav-right">
+    <button class="btn-logout" onclick="logout()">退出</button>
+  </div>
+</nav>
+
+<div class="page">
+  <div class="card">
+    <div class="card-header" id="form-title">新增学生</div>
+
+    <form id="student-form" autocomplete="off">
+      <div class="form-group">
+        <label for="name">姓名 <span class="required">*</span></label>
+        <input type="text" id="name" placeholder="请输入学生姓名" maxlength="50">
+        <div class="field-error" id="name-error">请输入姓名</div>
+      </div>
+      <div class="form-group">
+        <label for="gender">性别 <span class="required">*</span></label>
+        <select id="gender">
+          <option value="">请选择性别</option>
+          <option value="男">男</option>
+          <option value="女">女</option>
+        </select>
+        <div class="field-error" id="gender-error">请选择性别</div>
+      </div>
+      <div class="form-group">
+        <label for="age">年龄 <span class="required">*</span></label>
+        <input type="number" id="age" placeholder="请输入年龄" min="1" max="150">
+        <div class="field-error" id="age-error">请输入有效年龄 (1-150)</div>
+      </div>
+      <div class="form-group">
+        <label for="phone">手机号</label>
+        <input type="tel" id="phone" placeholder="请输入手机号" maxlength="11">
+        <div class="field-error" id="phone-error">请输入有效的 11 位手机号</div>
+      </div>
+      <div class="form-group">
+        <label for="birthday">出生日期</label>
+        <input type="date" id="birthday">
+      </div>
+
+      <div class="btn-group" style="margin-top:6px;">
+        <button type="button" class="btn btn-ghost" onclick="window.location.href='student_list.html'">取 消</button>
+        <button type="submit" class="btn btn-primary" id="btn-submit">提 交</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/layout.js"></script>
+<script>
+(function () {
+  var user = checkAuth();
+
+  var params = new URLSearchParams(window.location.search);
+  var mode = params.get('mode') || 'add';
+  var idParam = params.get('id');
+  var editId = (idParam !== null && idParam !== '') ? parseInt(idParam, 10) : null;
+  var isEdit = (mode === 'edit' && editId !== null && !isNaN(editId));
+
+  function fillForm(d) {
+    document.getElementById('name').value = d.name || '';
+    document.getElementById('gender').value = d.gender || '';
+    document.getElementById('age').value = d.age || '';
+    document.getElementById('phone').value = d.phone_number || '';
+    if (d.birthday) {
+      var b = String(d.birthday);
+      if (b.length > 10) b = b.substring(0, 10);
+      document.getElementById('birthday').value = b;
+    }
+  }
+
+  if (isEdit) {
+    document.getElementById('page-title').textContent = '编辑学生';
+    document.getElementById('form-title').textContent = '编辑学生 #' + editId;
+
+    var cached = null;
+    try {
+      var raw = sessionStorage.getItem('edit_student');
+      if (raw) {
+        cached = JSON.parse(raw);
+        sessionStorage.removeItem('edit_student');
+        if (cached.id !== editId) cached = null;
+      }
+    } catch (e) { cached = null; }
+
+    if (cached) {
+      fillForm(cached);
+    } else {
+      toggleLoading(true, '加载学生信息...');
+      apiSearchStudent({ student_id: editId })
+        .then(function (res) {
+          var rows = (res && res.data) || [];
+          var found = null;
+          for (var i = 0; i < rows.length; i++) {
+            if (rows[i].id === editId) { found = rows[i]; break; }
+          }
+          if (found) fillForm(found);
+          else showToast('未找到该学生信息', 'error');
+        })
+        .catch(function (err) {
+          showToast('加载失败: ' + (err.message || '未知错误'), 'error');
+        })
+        .finally(function () { toggleLoading(false); });
+    }
+  }
+
+  function validate() {
+    var valid = true;
+    var name = document.getElementById('name').value.trim();
+    var gender = document.getElementById('gender').value;
+    var age = parseInt(document.getElementById('age').value, 10);
+    var phone = document.getElementById('phone').value.trim();
+
+    function setErr(id, elId, show) {
+      document.getElementById(id).classList.toggle('show', show);
+      document.getElementById(elId).classList.toggle('error', show);
+    }
+
+    if (!name) { setErr('name-error', 'name', true); valid = false; } else setErr('name-error', 'name', false);
+    if (!gender) { setErr('gender-error', 'gender', true); valid = false; } else setErr('gender-error', 'gender', false);
+    if (isNaN(age) || age < 1 || age > 150) { setErr('age-error', 'age', true); valid = false; } else setErr('age-error', 'age', false);
+    if (phone && !/^1\d{10}$/.test(phone)) { setErr('phone-error', 'phone', true); valid = false; } else setErr('phone-error', 'phone', false);
+    return valid;
+  }
+
+  document.getElementById('student-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!validate()) return;
+
+    var data = {
+      name: document.getElementById('name').value.trim(),
+      gender: document.getElementById('gender').value,
+      age: parseInt(document.getElementById('age').value, 10),
+      phone_number: document.getElementById('phone').value.trim() || null,
+      birthday: document.getElementById('birthday').value || null
+    };
+
+    var btn = document.getElementById('btn-submit');
+    btn.disabled = true;
+    btn.textContent = '提交中...';
+    toggleLoading(true, '保存中...');
+
+    var promise = isEdit ? apiUpdateStudent(editId, data) : apiAddStudent(data);
+    promise
+      .then(function () {
+        showToast(isEdit ? '修改成功' : '新增成功', 'success');
+        setTimeout(function () { window.location.href = 'student_list.html'; }, 600);
+      })
+      .catch(function (err) {
+        showToast(err.message || '操作失败', 'error');
+      })
+      .finally(function () {
+        btn.disabled = false;
+        btn.textContent = '提 交';
+        toggleLoading(false);
+      });
+  });
+})();
+</script>
+
+</body>
+</html>

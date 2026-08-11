@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>自定义SQL - 学校管理系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <span class="brand" onclick="window.location.href='index.html'"><span class="logo-dot">&#127979;</span> 自定义SQL</span>
+  <div class="nav-right">
+    <span class="user-chip" id="user-name"></span>
+    <button class="btn-logout" onclick="logout()">退出</button>
+  </div>
+</nav>
+
+<div class="page">
+  <div class="card">
+    <div class="card-header">SQL 查询控制台</div>
+
+    <div class="form-group">
+      <label for="sql-input">请输入只读 SQL 语句</label>
+      <textarea id="sql-input" placeholder="SELECT * FROM student; SELECT name, gender, COUNT(*) FROM student GROUP BY gender; SHOW TABLES; DESC classes; ..."></textarea>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <button class="btn btn-primary" id="btn-exec" style="flex:1;">执 行</button>
+      <button class="btn btn-ghost" id="btn-clear" style="flex:0;">清 空</button>
+    </div>
+
+    <div style="font-size:.76rem; color:var(--warning); background:var(--warning-light); padding:9px 12px; border-radius:8px;">
+      &#9888; 安全提示：出于安全考虑，仅允许执行 <b>SELECT / SHOW / DESC / DESCRIBE / EXPLAIN</b> 等查询语句，
+      不支持 INSERT / UPDATE / DELETE / DROP 等修改操作。快捷键 <b>Ctrl + Enter</b> 执行。
+    </div>
+  </div>
+
+  <!-- 常用查询快捷按钮 -->
+  <div class="card">
+    <div class="card-header">常用查询</div>
+    <div style="display:flex; flex-wrap:wrap; gap:6px;">
+      <button class="btn btn-outline btn-xs quick-sql">SELECT * FROM student</button>
+      <button class="btn btn-outline btn-xs quick-sql">SELECT * FROM student ORDER BY id DESC</button>
+      <button class="btn btn-outline btn-xs quick-sql">SELECT COUNT(*) AS cnt FROM student</button>
+      <button class="btn btn-outline btn-xs quick-sql">SELECT gender, COUNT(*) AS cnt FROM student GROUP BY gender</button>
+      <button class="btn btn-outline btn-xs quick-sql">SELECT grade, COUNT(*) AS cnt FROM student GROUP BY grade</button>
+      <button class="btn btn-outline btn-xs quick-sql">SELECT * FROM teachers</button>
+      <button class="btn btn-outline btn-xs quick-sql">SELECT * FROM classes</button>
+      <button class="btn btn-outline btn-xs quick-sql">SELECT * FROM courses</button>
+      <button class="btn btn-outline btn-xs quick-sql">SHOW TABLES</button>
+      <button class="btn btn-outline btn-xs quick-sql">DESC student</button>
+    </div>
+  </div>
+
+  <!-- 结果区域 -->
+  <div class="sql-result" id="result-area" style="display:none;">
+    <div class="card">
+      <div class="result-header">
+        <span class="result-count" id="result-count"></span>
+        <span style="cursor:pointer; color:var(--text-muted); font-size:1.1rem; padding:0 4px;" onclick="document.getElementById('result-area').style.display='none';">&#10005;</span>
+      </div>
+      <div class="table-wrap">
+        <table id="result-table">
+          <thead id="result-thead"></thead>
+          <tbody id="result-tbody"></tbody>
+        </table>
+      </div>
+      <div id="result-message" style="display:none; padding:12px; font-size:.9rem;"></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/layout.js"></script>
+<script>
+(function () {
+  var user = checkAuth();
+  document.getElementById('user-name').textContent = user.nickname || user.username;
+
+  var sqlInput = document.getElementById('sql-input');
+  var resultArea = document.getElementById('result-area');
+
+  document.getElementById('btn-exec').addEventListener('click', function () {
+    var sql = sqlInput.value.trim();
+    if (!sql) { showToast('请输入 SQL 语句', 'warning'); return; }
+
+    var btn = document.getElementById('btn-exec');
+    btn.disabled = true;
+    btn.textContent = '执行中...';
+    toggleLoading(true, '执行中...');
+
+    apiCustomQuery(sql)
+      .then(function (res) {
+        resultArea.style.display = 'block';
+        var isQuery = (res.type === 'query');
+        document.getElementById('result-table').style.display = isQuery ? '' : 'none';
+        document.getElementById('result-message').style.display = isQuery ? 'none' : '';
+
+        if (isQuery) {
+          var rows = res.rows || [];
+          var displayRows = rows.slice(0, 200);
+          var truncated = rows.length > 200;
+          document.getElementById('result-count').textContent =
+            '查询到 ' + rows.length + ' 条记录' + (truncated ? '（仅显示前 200 条）' : '');
+
+          var columns = displayRows.length > 0 ? Object.keys(displayRows[0]) : [];
+          var thead = document.getElementById('result-thead');
+          thead.innerHTML = '';
+          var thr = document.createElement('tr');
+          columns.forEach(function (c) {
+            var th = document.createElement('th');
+            th.textContent = c;
+            thr.appendChild(th);
+          });
+          thead.appendChild(thr);
+
+          var tbody = document.getElementById('result-tbody');
+          tbody.innerHTML = '';
+          displayRows.forEach(function (row) {
+            var tr = document.createElement('tr');
+            columns.forEach(function (c) {
+              var td = document.createElement('td');
+              var val = row[c];
+              if (val === null || val === undefined) {
+                td.innerHTML = '<i style="color:#c3c3c3;">NULL</i>';
+              } else {
+                td.textContent = String(val);
+              }
+              tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+          });
+          if (displayRows.length === 0) {
+            var emptyTr = document.createElement('tr');
+            var emptyTd = document.createElement('td');
+            emptyTd.colSpan = columns.length || 1;
+            emptyTd.style.textAlign = 'center';
+            emptyTd.style.color = '#9ca3af';
+            emptyTd.textContent = '无数据';
+            emptyTr.appendChild(emptyTd);
+            tbody.appendChild(emptyTr);
+          }
+        } else {
+          document.getElementById('result-count').textContent = '执行结果';
+          var msgDiv = document.getElementById('result-message');
+          msgDiv.style.display = 'block';
+          msgDiv.innerHTML = '';
+          var inner = document.createElement('div');
+          inner.style.cssText = 'padding:14px; background:#f0fdf4; border-radius:8px; color:#16a34a; font-weight:600;';
+          inner.textContent = res.message || '执行成功';
+          msgDiv.appendChild(inner);
+        }
+        showToast('执行成功', 'success');
+      })
+      .catch(function (err) {
+        resultArea.style.display = 'block';
+        document.getElementById('result-table').style.display = 'none';
+        document.getElementById('result-count').textContent = '执行失败';
+        document.getElementById('result-message').style.display = 'block';
+        document.getElementById('result-message').innerHTML = '';
+        var errDiv = document.createElement('div');
+        errDiv.style.cssText = 'padding:14px; background:#fef2f2; border-radius:8px; color:#ef4444;';
+        errDiv.textContent = err.message || '执行失败';
+        document.getElementById('result-message').appendChild(errDiv);
+        showToast(err.message || '执行失败', 'error');
+      })
+      .finally(function () {
+        btn.disabled = false;
+        btn.textContent = '执 行';
+        toggleLoading(false);
+      });
+  });
+
+  document.getElementById('btn-clear').addEventListener('click', function () {
+    sqlInput.value = '';
+    resultArea.style.display = 'none';
+  });
+
+  document.querySelectorAll('.quick-sql').forEach(function (btn) {
+    btn.addEventListener('click', function () { sqlInput.value = this.textContent; });
+  });
+
+  sqlInput.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      document.getElementById('btn-exec').click();
+    }
+  });
+})();
+</script>
+
+</body>
+</html>

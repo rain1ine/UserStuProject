@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>班级信息 - 学校管理系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <button class="btn-back" onclick="window.location.href='classes_list.html'">&#8592;</button>
+  <span class="brand" onclick="window.location.href='index.html'"><span class="logo-dot">&#127979;</span> <span id="page-title">新增班级</span></span>
+  <div class="nav-right">
+    <button class="btn-logout" onclick="logout()">退出</button>
+  </div>
+</nav>
+
+<div class="page">
+  <div class="card">
+    <div class="card-header" id="form-title">新增班级</div>
+
+    <form id="class-form" autocomplete="off">
+      <div class="form-group">
+        <label for="name">班级名称 <span class="required">*</span></label>
+        <input type="text" id="name" placeholder="如：高一(3)班" maxlength="50">
+        <div class="field-error" id="name-error">请输入班级名称</div>
+      </div>
+      <div class="form-group">
+        <label for="grade">年级 <span class="required">*</span></label>
+        <select id="grade">
+          <option value="">请选择年级</option>
+          <option value="高一">高一</option>
+          <option value="高二">高二</option>
+          <option value="高三">高三</option>
+        </select>
+        <div class="field-error" id="grade-error">请选择年级</div>
+      </div>
+      <div class="form-group">
+        <label for="head-teacher">班主任老师 <span class="required">*</span></label>
+        <select id="head-teacher">
+          <option value="">请选择老师</option>
+        </select>
+      </div>
+
+      <div class="btn-group" style="margin-top:6px;">
+        <button type="button" class="btn btn-ghost" onclick="window.location.href='classes_list.html'">取 消</button>
+        <button type="submit" class="btn btn-primary" id="btn-submit">提 交</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/layout.js"></script>
+<script>
+(function () {
+  var user = checkAuth();
+
+  var params = new URLSearchParams(window.location.search);
+  var mode = params.get('mode') || 'add';
+  var idParam = params.get('id');
+  var editId = (idParam !== null && idParam !== '') ? parseInt(idParam, 10) : null;
+  var isEdit = (mode === 'edit' && editId !== null && !isNaN(editId));
+
+  // 加载老师下拉
+  var headSelect = document.getElementById('head-teacher');
+  apiGetAllTeachers()
+    .then(function (res) {
+      (res.data || []).forEach(function (t) {
+        var opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name + '（' + (t.subject || '--') + '）';
+        headSelect.appendChild(opt);
+      });
+      loadFormData();
+    })
+    .catch(function (err) {
+      showToast('加载老师列表失败: ' + (err.message || ''), 'error');
+      loadFormData();
+    });
+
+  function loadFormData() {
+    if (!isEdit) {
+      document.getElementById('page-title').textContent = '新增班级';
+      document.getElementById('form-title').textContent = '新增班级';
+      return;
+    }
+    document.getElementById('page-title').textContent = '编辑班级';
+    document.getElementById('form-title').textContent = '编辑班级 #' + editId;
+
+    var cached = null;
+    try {
+      var raw = sessionStorage.getItem('edit_class');
+      if (raw) {
+        cached = JSON.parse(raw);
+        sessionStorage.removeItem('edit_class');
+        if (cached.id !== editId) cached = null;
+      }
+    } catch (e) { cached = null; }
+
+    if (cached) {
+      fillForm(cached);
+    } else {
+      toggleLoading(true, '加载班级信息...');
+      fetch('/classes/one/' + editId).then(function (r) { return r.json(); })
+        .then(function (res) {
+          var d = (res && res.data) || null;
+          if (d) fillForm(d);
+          else showToast('未找到该班级信息', 'error');
+        })
+        .catch(function (err) { showToast('加载失败: ' + (err.message || ''), 'error'); })
+        .finally(function () { toggleLoading(false); });
+    }
+  }
+
+  function fillForm(d) {
+    document.getElementById('name').value = d.name || '';
+    document.getElementById('grade').value = d.grade || '';
+    headSelect.value = d.head_teacher_id || '';
+  }
+
+  function validate() {
+    var valid = true;
+    var name = document.getElementById('name').value.trim();
+    var grade = document.getElementById('grade').value;
+    var head = headSelect.value;
+
+    function setErr(id, elId, show) {
+      document.getElementById(id).classList.toggle('show', show);
+      document.getElementById(elId).classList.toggle('error', show);
+    }
+    if (!name) { setErr('name-error', 'name', true); valid = false; } else setErr('name-error', 'name', false);
+    if (!grade) { setErr('grade-error', 'grade', true); valid = false; } else setErr('grade-error', 'grade', false);
+    if (!head) { showToast('请选择班主任老师', 'warning'); valid = false; }
+    return valid;
+  }
+
+  document.getElementById('class-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!validate()) return;
+
+    var data = {
+      name: document.getElementById('name').value.trim(),
+      grade: document.getElementById('grade').value,
+      head_teacher_id: parseInt(headSelect.value, 10)
+    };
+
+    var btn = document.getElementById('btn-submit');
+    btn.disabled = true;
+    btn.textContent = '提交中...';
+    toggleLoading(true, '保存中...');
+
+    var promise = isEdit ? apiUpdateClass(editId, data) : apiAddClass(data);
+    promise
+      .then(function () {
+        showToast(isEdit ? '修改成功' : '新增成功', 'success');
+        setTimeout(function () { window.location.href = 'classes_list.html'; }, 600);
+      })
+      .catch(function (err) { showToast(err.message || '操作失败', 'error'); })
+      .finally(function () {
+        btn.disabled = false;
+        btn.textContent = '提 交';
+        toggleLoading(false);
+      });
+  });
+})();
+</script>
+
+</body>
+</html>

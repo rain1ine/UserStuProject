@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>课程管理 - 学校管理系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <span class="brand" onclick="window.location.href='index.html'"><span class="logo-dot">&#127979;</span> 课程管理</span>
+  <div class="nav-right">
+    <span class="user-chip" id="user-name"></span>
+    <button class="btn-logout" onclick="logout()">退出</button>
+  </div>
+</nav>
+
+<div class="page">
+  <div class="toolbar">
+    <input type="text" id="keyword" placeholder="搜索课程名称 / 课程ID..." maxlength="50">
+    <button class="btn btn-primary btn-sm" id="btn-search">搜索</button>
+    <button class="btn btn-ghost btn-sm" id="btn-reset">重置</button>
+  </div>
+
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+    <span style="font-size:.82rem; color:var(--text-muted);">共 <b id="total-count" style="color:var(--primary);">0</b> 条记录</span>
+    <a href="course_form.html" class="btn btn-primary btn-sm" style="width:auto;">+ 新增课程</a>
+  </div>
+
+  <div class="card" style="padding:8px 12px;">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>课程名称</th><th>学分</th><th>任课老师</th><th>操作</th></tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card-list" id="card-list"></div>
+  <div class="empty" id="empty-state" style="display:none;">
+    <div class="icon">&#128203;</div>
+    <div class="text" id="empty-text">暂无课程数据</div>
+  </div>
+
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<a href="course_form.html" class="fab" title="新增课程">+</a>
+
+<!-- 选老师弹窗 -->
+<div class="modal-overlay" id="assign-modal">
+  <div class="modal">
+    <div class="modal-title">分配任课老师</div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>课程</label>
+        <input type="text" id="assign-course-name" disabled style="background:var(--bg);">
+      </div>
+      <div class="form-group">
+        <label for="assign-teacher">授课老师 <span class="required">*</span></label>
+        <select id="assign-teacher">
+          <option value="">请选择老师</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" id="assign-cancel">取消</button>
+      <button class="btn btn-primary btn-sm" id="assign-save" style="width:auto;">保存</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/layout.js"></script>
+<script>
+(function () {
+  var user = checkAuth();
+  document.getElementById('user-name').textContent = user.nickname || user.username;
+
+  var currentPage = 1, pageSize = 10, isSearchMode = false, searchResults = [];
+  var tableBody = document.getElementById('table-body');
+  var cardList = document.getElementById('card-list');
+  var emptyState = document.getElementById('empty-state');
+  var emptyText = document.getElementById('empty-text');
+  var pagination = document.getElementById('pagination');
+  var totalCount = document.getElementById('total-count');
+  var keywordInput = document.getElementById('keyword');
+  var assignModal = document.getElementById('assign-modal');
+  var assignCourseId = null;
+
+  function escHtml(str) {
+    if (str === null || str === undefined) return '--';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function buildActions(c) {
+    var wrap = document.createElement('div');
+    wrap.className = 'actions';
+    var assignBtn = document.createElement('button');
+    assignBtn.className = 'btn btn-outline btn-xs';
+    assignBtn.textContent = '选老师';
+    assignBtn.onclick = function () { openAssign(c); };
+    var editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-outline btn-xs';
+    editBtn.textContent = '编辑';
+    editBtn.onclick = function () { editCourse(c); };
+    var delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-outline-danger btn-xs';
+    delBtn.textContent = '删除';
+    delBtn.onclick = function () { delCourse(c.id, c.name || ''); };
+    wrap.appendChild(assignBtn);
+    wrap.appendChild(editBtn);
+    wrap.appendChild(delBtn);
+    return wrap;
+  }
+
+  function renderRows(rows) {
+    tableBody.innerHTML = '';
+    cardList.innerHTML = '';
+    if (!rows || rows.length === 0) {
+      emptyState.style.display = 'block';
+      emptyText.textContent = isSearchMode ? '未找到匹配的课程' : '暂无课程数据';
+      return;
+    }
+    emptyState.style.display = 'none';
+
+    rows.forEach(function (c) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td><b>' + escHtml(c.name) + '</b></td>' +
+        '<td><span class="badge gray">' + (c.credit || 0) + ' 学分</span></td>' +
+        '<td>' + escHtml(c.teacher_name) + '</td>';
+      var td = document.createElement('td');
+      td.appendChild(buildActions(c));
+      tr.appendChild(td);
+      tableBody.appendChild(tr);
+    });
+
+    rows.forEach(function (c) {
+      var card = document.createElement('div');
+      card.className = 'list-card';
+      card.innerHTML =
+        '<div class="lc-head"><span class="lc-name">' + escHtml(c.name) + '</span>' +
+        '<span class="badge gray">' + (c.credit || 0) + ' 学分</span></div>' +
+        '<div class="lc-rows">' +
+        '<div class="lc-row"><span class="lc-label">任课老师</span><span class="lc-value">' + escHtml(c.teacher_name) + '</span></div>' +
+        '</div><div class="lc-actions"></div>';
+      card.querySelector('.lc-actions').appendChild(buildActions(c));
+      cardList.appendChild(card);
+    });
+  }
+
+  function renderPagination(total, page, totalPages) {
+    totalCount.textContent = total;
+    if (totalPages <= 1) { pagination.innerHTML = ''; return; }
+    var html = '<button ' + (page <= 1 ? 'disabled' : '') + ' onclick="goPage(' + (page - 1) + ')">上一页</button>';
+    var start = Math.max(1, page - 2);
+    var end = Math.min(totalPages, page + 2);
+    if (end - start < 4) {
+      if (start === 1) end = Math.min(totalPages, start + 4);
+      else start = Math.max(1, end - 4);
+    }
+    if (start > 1) html += '<button onclick="goPage(1)">1</button><span style="padding:0 2px;color:var(--text-muted);">...</span>';
+    for (var i = start; i <= end; i++) html += '<button ' + (i === page ? 'class="active"' : '') + ' onclick="goPage(' + i + ')">' + i + '</button>';
+    if (end < totalPages) html += '<span style="padding:0 2px;color:var(--text-muted);">...</span><button onclick="goPage(' + totalPages + ')">' + totalPages + '</button>';
+    html += '<button ' + (page >= totalPages ? 'disabled' : '') + ' onclick="goPage(' + (page + 1) + ')">下一页</button>';
+    html += '<span class="page-info">第 ' + page + '/' + totalPages + ' 页</span>';
+    pagination.innerHTML = html;
+  }
+
+  function paginateArray(arr, page, size) { return arr.slice((page - 1) * size, page * size); }
+
+  function loadData(page) {
+    page = page || 1;
+    toggleLoading(true, '加载中...');
+    apiGetCoursePage(page, pageSize)
+      .then(function (res) {
+        renderRows(res.rows || []);
+        renderPagination(res.total, res.page, res.total_pages);
+        currentPage = res.page;
+        isSearchMode = false;
+      })
+      .catch(function (err) { showToast(err.message || '加载失败', 'error'); renderRows([]); })
+      .finally(function () { toggleLoading(false); });
+  }
+
+  function doSearch(page) {
+    page = page || 1;
+    var kw = keywordInput.value.trim();
+    if (!kw) { loadData(1); return; }
+    var params = {};
+    if (/^\d+$/.test(kw)) { params.course_id = kw; }
+    else if (kw.length >= 2) { params.name = kw; }
+    else { showToast('课程名至少输入 2 个字符', 'warning'); return; }
+
+    toggleLoading(true, '搜索中...');
+    apiSearchCourse(params)
+      .then(function (res) {
+        searchResults = res.data || [];
+        isSearchMode = true;
+        var total = searchResults.length;
+        var totalPages = Math.max(1, Math.ceil(total / pageSize));
+        currentPage = Math.min(page, totalPages);
+        renderRows(paginateArray(searchResults, currentPage, pageSize));
+        renderPagination(total, currentPage, totalPages);
+        if (total === 0) showToast('未找到匹配的课程', 'warning');
+      })
+      .catch(function (err) { showToast(err.message || '搜索失败', 'error'); })
+      .finally(function () { toggleLoading(false); });
+  }
+
+  window.goPage = function (page) {
+    if (isSearchMode) {
+      var totalPages = Math.max(1, Math.ceil(searchResults.length / pageSize));
+      currentPage = Math.min(page, totalPages);
+      renderRows(paginateArray(searchResults, currentPage, pageSize));
+      renderPagination(searchResults.length, currentPage, totalPages);
+    } else {
+      loadData(page);
+    }
+  };
+
+  window.editCourse = function (c) {
+    try { sessionStorage.setItem('edit_course', JSON.stringify(c)); } catch (e) {}
+    window.location.href = 'course_form.html?mode=edit&id=' + c.id;
+  };
+
+  window.delCourse = function (id, name) {
+    showConfirm('删除确认', '确定要删除课程「' + name + '」吗？此操作不可撤销。')
+      .then(function (ok) {
+        if (!ok) return;
+        toggleLoading(true, '删除中...');
+        apiDeleteCourse(id)
+          .then(function () {
+            showToast('删除成功', 'success');
+            if (isSearchMode) doSearch(currentPage); else loadData(currentPage);
+          })
+          .catch(function (err) { showToast(err.message || '删除失败', 'error'); toggleLoading(false); });
+      });
+  };
+
+  // ---- 选老师 ----
+  function openAssign(c) {
+    assignCourseId = c.id;
+    document.getElementById('assign-course-name').value = c.name || '';
+    document.getElementById('assign-teacher').value = c.teacher_id || '';
+    assignModal.classList.add('show');
+    var sel = document.getElementById('assign-teacher');
+    if (sel.options.length <= 1) {
+      toggleLoading(true, '加载老师...');
+      apiGetAllTeachers()
+        .then(function (res) {
+          sel.innerHTML = '<option value="">请选择老师</option>';
+          (res.data || []).forEach(function (t) {
+            var opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = t.name + '（' + (t.subject || '--') + '）';
+            sel.appendChild(opt);
+          });
+          sel.value = c.teacher_id || '';
+        })
+        .catch(function (err) { showToast(err.message || '加载老师失败', 'error'); })
+        .finally(function () { toggleLoading(false); });
+    }
+  }
+
+  function closeAssign() { assignModal.classList.remove('show'); }
+  document.getElementById('assign-cancel').onclick = closeAssign;
+  assignModal.onclick = function (e) { if (e.target === assignModal) closeAssign(); };
+  document.getElementById('assign-save').onclick = function () {
+    var teacherId = document.getElementById('assign-teacher').value;
+    if (!teacherId) { showToast('请选择授课老师', 'warning'); return; }
+    toggleLoading(true, '保存中...');
+    apiCourseAssignTeacher(assignCourseId, teacherId)
+      .then(function () {
+        showToast('任课老师已更新', 'success');
+        closeAssign();
+        if (isSearchMode) doSearch(currentPage); else loadData(currentPage);
+      })
+      .catch(function (err) { showToast(err.message || '保存失败', 'error'); })
+      .finally(function () { toggleLoading(false); });
+  };
+
+  document.getElementById('btn-search').addEventListener('click', function () { doSearch(1); });
+  document.getElementById('btn-reset').addEventListener('click', function () {
+    keywordInput.value = '';
+    isSearchMode = false; searchResults = [];
+    loadData(1);
+  });
+  keywordInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') doSearch(1); });
+
+  loadData(1);
+})();
+</script>
+
+</body>
+</html>

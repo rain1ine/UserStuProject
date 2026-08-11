@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>控制台 - 学校管理系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <span class="brand" onclick="window.location.href='index.html'"><span class="logo-dot">&#127979;</span> 学校管理系统</span>
+  <div class="nav-right">
+    <span class="user-chip" id="user-name"></span>
+    <button class="btn-logout" onclick="logout()">退出</button>
+  </div>
+</nav>
+
+<div class="page">
+  <!-- 欢迎卡片 -->
+  <div class="hero">
+    <h2 id="hero-greet">你好，欢迎回来</h2>
+    <p id="hero-date"></p>
+    <span class="hero-badge" id="hero-role">管理员</span>
+  </div>
+
+  <!-- 统计卡片 -->
+  <div class="stat-row">
+    <div class="stat-card blue">
+      <div class="stat-value" id="stat-total">--</div>
+      <div class="stat-label">学生总数</div>
+    </div>
+    <div class="stat-card green">
+      <div class="stat-value" id="stat-male">--</div>
+      <div class="stat-label">男生</div>
+    </div>
+    <div class="stat-card pink">
+      <div class="stat-value" id="stat-female">--</div>
+      <div class="stat-label">女生</div>
+    </div>
+  </div>
+
+  <!-- 图表区（桌面并排） -->
+  <div class="chart-grid">
+    <div class="card">
+      <div class="card-header">性别分布</div>
+      <div id="chart-gender" class="chart-box sm"></div>
+    </div>
+    <div class="card">
+      <div class="card-header">年级分布</div>
+      <div id="chart-grade" class="chart-box sm"></div>
+    </div>
+  </div>
+
+  <!-- 功能模块 -->
+  <div class="section-title"><span class="bar"></span> 功能模块</div>
+  <div class="grid">
+    <a href="student_list.html" class="grid-card">
+      <div class="icon blue">&#128218;</div>
+      <div class="title">学生列表</div>
+      <div class="desc">查看 / 搜索 / 管理</div>
+    </a>
+    <a href="student_form.html" class="grid-card">
+      <div class="icon green">&#10133;</div>
+      <div class="title">新增学生</div>
+      <div class="desc">录入学生信息</div>
+    </a>
+    <a href="teacher_list.html" class="grid-card">
+      <div class="icon orange">&#128483;</div>
+      <div class="title">老师管理</div>
+      <div class="desc">教师信息维护</div>
+    </a>
+    <a href="classes_list.html" class="grid-card">
+      <div class="icon pink">&#127979;</div>
+      <div class="title">班级管理</div>
+      <div class="desc">分班 / 班主任</div>
+    </a>
+    <a href="course_list.html" class="grid-card">
+      <div class="icon purple">&#128214;</div>
+      <div class="title">课程管理</div>
+      <div class="desc">课程与任课老师</div>
+    </a>
+    <a href="analytics.html" class="grid-card">
+      <div class="icon cyan">&#128200;</div>
+      <div class="title">统计分析</div>
+      <div class="desc">数据图表洞察</div>
+    </a>
+    <a href="custom_sql.html" class="grid-card">
+      <div class="icon blue">&#128187;</div>
+      <div class="title">自定义SQL</div>
+      <div class="desc">只读查询控制台</div>
+    </a>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/layout.js"></script>
+<script>
+(function () {
+  var user = checkAuth();
+
+  // 顶部用户信息
+  document.getElementById('user-name').textContent = user.nickname || user.username;
+  document.getElementById('hero-greet').textContent = '你好，' + (user.nickname || user.username);
+  document.getElementById('hero-role').textContent = user.role || '管理员';
+  var now = new Date();
+  document.getElementById('hero-date').textContent =
+    '今天是 ' + now.getFullYear() + ' 年 ' + (now.getMonth() + 1) + ' 月 ' + now.getDate() + ' 日';
+
+  // 图表配色（dataviz 验证过的分类色：男-蓝 / 女-粉；年级依次 蓝/橙/青）
+  var COLOR_GENDER = { '男': '#2a78d6', '女': '#e87ba4' };
+  var COLOR_GRADE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#4a3aa7'];
+
+  var hasEcharts = (typeof window.echarts !== 'undefined');
+
+  function initCharts(genderData, gradeData) {
+    if (!hasEcharts) {
+      var boxes = document.querySelectorAll('.chart-box');
+      boxes.forEach(function (el) {
+        el.innerHTML = '<div style="padding:50px 0;text-align:center;color:#9ca3af;font-size:.85rem;">图表组件加载失败，请检查网络后刷新</div>';
+      });
+      return;
+    }
+
+    // --- 性别饼图 ---
+    var genderChart = echarts.init(document.getElementById('chart-gender'));
+    genderChart.setOption({
+      color: genderData.map(function (d) { return COLOR_GENDER[d.name] || '#2a78d6'; }),
+      tooltip: { trigger: 'item', formatter: '{b}: {c} 人（{d}%）' },
+      legend: { bottom: 0, icon: 'circle', itemWidth: 8, itemHeight: 8, textStyle: { fontSize: 12 } },
+      series: [{
+        name: '性别分布',
+        type: 'pie',
+        radius: ['44%', '66%'],
+        center: ['50%', '44%'],
+        itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+        label: { formatter: '{b} {d}%', fontSize: 12 },
+        labelLine: { length: 10, length2: 8 },
+        data: genderData
+      }]
+    });
+
+    // --- 年级柱状图 ---
+    var gradeNames = gradeData.map(function (d) { return d.name; });
+    var gradeChart = echarts.init(document.getElementById('chart-grade'));
+    gradeChart.setOption({
+      color: COLOR_GRADE,
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: '{b}: {c} 人' },
+      grid: { left: 44, right: 14, top: 28, bottom: 26 },
+      xAxis: { type: 'category', data: gradeNames, axisTick: { show: false }, axisLine: { lineStyle: { color: '#c3c2b7' } } },
+      yAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { color: '#e5e7eb' } }, axisLabel: { color: '#6b7280' } },
+      series: [{
+        name: '人数',
+        type: 'bar',
+        barWidth: '42%',
+        data: gradeData.map(function (d, i) { return { value: d.value, itemStyle: { color: COLOR_GRADE[i % COLOR_GRADE.length], borderRadius: [6, 6, 0, 0] } }; }),
+        label: { show: true, position: 'top', color: '#374151', fontSize: 12 }
+      }]
+    });
+  }
+
+  // 加载统计与图表
+  function loadStats() {
+    apiModelStats()
+      .then(function (res) {
+        var data = (res && res.data) || {};
+        var gender = data.gender || [];
+        var grade = data.class || [];
+        var male = 0, female = 0;
+        gender.forEach(function (g) {
+          if (g.name === '男') male = g.value;
+          else if (g.name === '女') female = g.value;
+        });
+        document.getElementById('stat-male').textContent = male;
+        document.getElementById('stat-female').textContent = female;
+        initCharts(gender, grade);
+
+        // 总数用分页接口的 total（更准确，含无性别记录）
+        return apiGetStudentPage(1, 1);
+      })
+      .then(function (res) {
+        if (res && res.total !== undefined) {
+          document.getElementById('stat-total').textContent = res.total;
+        }
+      })
+      .catch(function () {
+        document.getElementById('stat-total').textContent = '?';
+        document.getElementById('stat-male').textContent = '?';
+        document.getElementById('stat-female').textContent = '?';
+        initCharts([], []);
+      });
+  }
+
+  loadStats();
+})();
+</script>
+
+</body>
+</html>

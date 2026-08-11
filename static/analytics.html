@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>统计分析 - 学校管理系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <span class="brand" onclick="window.location.href='index.html'"><span class="logo-dot">&#127979;</span> 统计分析</span>
+  <div class="nav-right">
+    <span class="user-chip" id="user-name"></span>
+    <button class="btn-logout" onclick="logout()">退出</button>
+  </div>
+</nav>
+
+<div class="page">
+  <!-- 概览统计（桌面一行四卡） -->
+  <div class="stat-row">
+    <div class="stat-card blue"><div class="stat-value" id="st-students">--</div><div class="stat-label">学生总数</div></div>
+    <div class="stat-card green"><div class="stat-value" id="st-teachers">--</div><div class="stat-label">老师总数</div></div>
+    <div class="stat-card orange"><div class="stat-value" id="st-classes" style="color:#f59e0b;">--</div><div class="stat-label">班级总数</div></div>
+    <div class="stat-card purple"><div class="stat-value" id="st-courses" style="color:#8b5cf6;">--</div><div class="stat-label">课程总数</div></div>
+  </div>
+
+  <!-- 图表区（桌面并排） -->
+  <div class="chart-grid">
+    <div class="card">
+      <div class="card-header">性别分布</div>
+      <div id="chart-gender" class="chart-box"></div>
+    </div>
+    <div class="card">
+      <div class="card-header">年级分布</div>
+      <div id="chart-grade" class="chart-box"></div>
+    </div>
+  </div>
+
+  <!-- 明细表（可访问性补充） -->
+  <div class="card">
+    <div class="card-header">数据明细</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>维度</th><th>分类</th><th>人数</th></tr>
+        </thead>
+        <tbody id="detail-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/layout.js"></script>
+<script>
+(function () {
+  var user = checkAuth();
+  document.getElementById('user-name').textContent = user.nickname || user.username;
+
+  var COLOR_GENDER = { '男': '#2a78d6', '女': '#e87ba4' };
+  var COLOR_GRADE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#4a3aa7'];
+  var hasEcharts = (typeof window.echarts !== 'undefined');
+
+  function renderCharts(genderData, gradeData) {
+    if (!hasEcharts) {
+      document.querySelectorAll('.chart-box').forEach(function (el) {
+        el.innerHTML = '<div style="padding:60px 0;text-align:center;color:#9ca3af;font-size:.85rem;">图表组件加载失败，请检查网络后刷新</div>';
+      });
+      return;
+    }
+
+    var genderChart = echarts.init(document.getElementById('chart-gender'));
+    genderChart.setOption({
+      color: genderData.map(function (d) { return COLOR_GENDER[d.name] || '#2a78d6'; }),
+      tooltip: { trigger: 'item', formatter: '{b}: {c} 人（{d}%）' },
+      legend: { bottom: 0, icon: 'circle', itemWidth: 8, itemHeight: 8, textStyle: { fontSize: 12 } },
+      series: [{
+        name: '性别分布', type: 'pie', radius: ['40%', '65%'], center: ['50%', '46%'],
+        itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 2 },
+        label: { formatter: '{b}\n{d}%', fontSize: 13, lineHeight: 18 },
+        data: genderData
+      }]
+    });
+
+    var gradeChart = echarts.init(document.getElementById('chart-grade'));
+    gradeChart.setOption({
+      color: COLOR_GRADE,
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: '{b}: {c} 人' },
+      grid: { left: 44, right: 16, top: 30, bottom: 28 },
+      xAxis: { type: 'category', data: gradeData.map(function (d) { return d.name; }), axisTick: { show: false }, axisLine: { lineStyle: { color: '#c3c2b7' } } },
+      yAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { color: '#e5e7eb' } }, axisLabel: { color: '#6b7280' } },
+      series: [{
+        name: '人数', type: 'bar', barWidth: '42%',
+        data: gradeData.map(function (d, i) { return { value: d.value, itemStyle: { color: COLOR_GRADE[i % COLOR_GRADE.length], borderRadius: [6, 6, 0, 0] } }; }),
+        label: { show: true, position: 'top', color: '#374151', fontSize: 13 }
+      }]
+    });
+  }
+
+  function renderDetail(genderData, gradeData) {
+    var tbody = document.getElementById('detail-body');
+    tbody.innerHTML = '';
+    genderData.forEach(function (g) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>性别</td><td>' + g.name + '</td><td>' + g.value + ' 人</td>';
+      tbody.appendChild(tr);
+    });
+    gradeData.forEach(function (g) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>年级</td><td>' + g.name + '</td><td>' + g.value + ' 人</td>';
+      tbody.appendChild(tr);
+    });
+    if (genderData.length === 0 && gradeData.length === 0) {
+      var empty = document.createElement('tr');
+      empty.innerHTML = '<td colspan="3" style="text-align:center;color:var(--text-muted);">暂无统计数据</td>';
+      tbody.appendChild(empty);
+    }
+  }
+
+  function loadAll() {
+    toggleLoading(true, '加载数据...');
+    Promise.all([
+      apiModelStats(),
+      apiGetStudentPage(1, 1),
+      apiGetTeacherPage(1, 1),
+      apiGetClassPage(1, 1),
+      apiGetCoursePage(1, 1)
+    ])
+      .then(function (arr) {
+        var model = (arr[0] && arr[0].data) || {};
+        var gender = model.gender || [];
+        var grade = model.class || [];
+        document.getElementById('st-students').textContent = (arr[1] && arr[1].total) || 0;
+        document.getElementById('st-teachers').textContent = (arr[2] && arr[2].total) || 0;
+        document.getElementById('st-classes').textContent = (arr[3] && arr[3].total) || 0;
+        document.getElementById('st-courses').textContent = (arr[4] && arr[4].total) || 0;
+        renderCharts(gender, grade);
+        renderDetail(gender, grade);
+      })
+      .catch(function (err) {
+        showToast(err.message || '加载失败', 'error');
+      })
+      .finally(function () { toggleLoading(false); });
+  }
+
+  loadAll();
+})();
+</script>
+
+</body>
+</html>
